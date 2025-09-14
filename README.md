@@ -4,13 +4,41 @@ Sistema completo para gerenciar biblioteca digital com operações CRUD.
 
 ## 🚀 Tecnologias
 
-- **Backend**: FastAPI + SQLite
+- **Backend**: FastAPI + SQLAlchemy + MySQL
 - **Frontend**: React + TypeScript + Vite
-- **Banco**: SQLite (criação automática)
+- **Banco**: MySQL 8.0+ (criação automática de tabelas)
+- **ORM**: SQLAlchemy 2.0
+
+## 🗄️ Configuração do Banco MySQL
+
+### Pré-requisitos
+- MySQL Server 8.0+ instalado
+- Acesso administrativo ao MySQL
+
+### Setup do Banco
+```sql
+-- Conectar ao MySQL
+mysql -u root -p
+
+-- Criar banco de dados
+CREATE DATABASE biblioteca CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Criar usuário (opcional)
+CREATE USER 'biblioteca_user'@'localhost' IDENTIFIED BY 'sua_senha_segura';
+GRANT ALL PRIVILEGES ON biblioteca.* TO 'biblioteca_user'@'localhost';
+FLUSH PRIVILEGES;
+```
 
 ## ⚡ Como Executar
 
-### Backend
+### 1. Configurar Variáveis de Ambiente
+```bash
+cd backend
+cp .env.example .env
+# Editar .env com suas credenciais MySQL
+```
+
+### 2. Backend
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -18,7 +46,7 @@ python main.py
 ```
 ▶️ **Roda em**: http://localhost:8000
 
-### Frontend
+### 3. Frontend
 ```bash
 cd frontend
 npm install
@@ -34,11 +62,12 @@ npm run dev
 - 🗑️ **Excluir** com confirmação
 - 🔍 **Buscar** por título, autor ou descrição
 
-## 🗄️ Banco de Dados
+## 🗄️ Banco de Dados - MySQL
 
-- SQLite local auto-configurável
-- Arquivo: `backend/books.db` (criado automaticamente)
-- Schema: Tabela `books` com validações e índices
+- MySQL 8.0+ com SQLAlchemy ORM
+- Tabelas criadas automaticamente na inicialização
+- Schema: Tabela `books` com constraints e relacionamentos
+- Suporte a transações e rollback automático
 
 ## 📊 API Documentation
 
@@ -48,9 +77,10 @@ Acesse: http://localhost:8000/docs (Swagger automático)
 
 ```
 ├── backend/
-│   ├── main.py              # API FastAPI completa
-│   ├── requirements.txt     # Dependências Python
-│   └── books.db            # Banco SQLite (auto-gerado)
+│   ├── main.py              # API FastAPI + SQLAlchemy
+│   ├── requirements.txt     # Dependências Python + MySQL
+│   ├── .env.example         # Exemplo de configuração
+│   └── .env                # Configurações MySQL (criar)
 ├── frontend/
 │   ├── src/
 │   │   ├── components/     # Componentes React

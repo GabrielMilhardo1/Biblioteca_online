@@ -23,6 +23,9 @@ backend/books.db
 *.sqlite
 *.sqlite3
 
+# Variáveis de ambiente
+backend/.env
+
 # Node.js
 node_modules/
 npm-debug.log*

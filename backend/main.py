@@ -3,19 +3,53 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from datetime import date, datetime
 from contextlib import asynccontextmanager
-import sqlite3
+from sqlalchemy import create_engine, text, Column, Integer, String, Text, Date, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost:3306/biblioteca")
+
+engine = create_engine(DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class BookModel(Base):
+    __tablename__ = "books"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(255), nullable=False)
+    author = Column(String(255), nullable=False)
+    isbn = Column(String(13), unique=True, nullable=False)
+    publication_date = Column(Date, nullable=False)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_database()
+    create_tables()
     yield
 
 app = FastAPI(
     title="Sistema de Gerenciamento de Livros",
-    description="API simples para CRUD de livros usando SQLite",
-    version="1.0.0",
+    description="API simples para CRUD de livros usando MySQL",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -26,8 +60,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-DATABASE_URL = "books.db"
 
 class BookBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=255, description="Título do livro")
@@ -54,220 +86,111 @@ class Book(BookBase):
     class Config:
         from_attributes = True
 
-def get_db_connection():
-    conn = sqlite3.connect(DATABASE_URL)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_database():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            author TEXT NOT NULL,
-            isbn TEXT UNIQUE NOT NULL,
-            publication_date DATE NOT NULL,
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books(author)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_isbn ON books(isbn)")
-    
-    conn.commit()
-    conn.close()
-
-
 @app.get("/", summary="Root endpoint")
 async def read_root():
-    return {"message": "Sistema de Gerenciamento de Livros API", "version": "1.0.0"}
+    return {"message": "Sistema de Gerenciamento de Livros API", "version": "2.0.0", "database": "MySQL"}
 
 @app.post("/api/books", response_model=Book, status_code=201, summary="Criar novo livro")
-async def create_book(book: BookCreate):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
+async def create_book(book: BookCreate, db: Session = Depends(get_db)):
     try:
-        cursor.execute("""
-            INSERT INTO books (title, author, isbn, publication_date, description)
-            VALUES (?, ?, ?, ?, ?)
-        """, (book.title, book.author, book.isbn, book.publication_date, book.description))
-        
-        book_id = cursor.lastrowid
-        conn.commit()
-        
-        cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-        row = cursor.fetchone()
-        
-        return Book(
-            id=row["id"],
-            title=row["title"],
-            author=row["author"],
-            isbn=row["isbn"],
-            publication_date=row["publication_date"],
-            description=row["description"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"]
+        db_book = BookModel(
+            title=book.title,
+            author=book.author,
+            isbn=book.isbn,
+            publication_date=book.publication_date,
+            description=book.description
         )
-    
-    except sqlite3.IntegrityError as e:
-        if "isbn" in str(e).lower():
+        db.add(db_book)
+        db.commit()
+        db.refresh(db_book)
+        return db_book
+    except IntegrityError as e:
+        db.rollback()
+        if "isbn" in str(e).lower() or "duplicate" in str(e).lower():
             raise HTTPException(status_code=400, detail="ISBN já existe")
         raise HTTPException(status_code=400, detail="Erro de integridade dos dados")
-    finally:
-        conn.close()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro interno do servidor: {str(e)}")
 
 @app.get("/api/books", response_model=List[Book], summary="Listar todos os livros")
-async def get_books(skip: int = 0, limit: int = 100):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, skip))
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [
-        Book(
-            id=row["id"],
-            title=row["title"],
-            author=row["author"],
-            isbn=row["isbn"],
-            publication_date=row["publication_date"],
-            description=row["description"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"]
-        )
-        for row in rows
-    ]
+async def get_books(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    try:
+        books = db.query(BookModel).order_by(BookModel.created_at.desc()).offset(skip).limit(limit).all()
+        return books
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar livros: {str(e)}")
 
 @app.get("/api/books/{book_id}", response_model=Book, summary="Obter livro por ID")
-async def get_book(book_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row is None:
-        raise HTTPException(status_code=404, detail="Livro não encontrado")
-    
-    return Book(
-        id=row["id"],
-        title=row["title"],
-        author=row["author"],
-        isbn=row["isbn"],
-        publication_date=row["publication_date"],
-        description=row["description"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"]
-    )
+async def get_book(book_id: int, db: Session = Depends(get_db)):
+    try:
+        book = db.query(BookModel).filter(BookModel.id == book_id).first()
+        if book is None:
+            raise HTTPException(status_code=404, detail="Livro não encontrado")
+        return book
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar livro: {str(e)}")
 
 @app.put("/api/books/{book_id}", response_model=Book, summary="Atualizar livro")
-async def update_book(book_id: int, book: BookUpdate):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-    existing_book = cursor.fetchone()
-    
-    if existing_book is None:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Livro não encontrado")
-    
-    update_data = book.dict(exclude_unset=True)
-    if not update_data:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-    
-    set_clause = ", ".join([f"{key} = ?" for key in update_data.keys()])
-    set_clause += ", updated_at = CURRENT_TIMESTAMP"
-    
+async def update_book(book_id: int, book: BookUpdate, db: Session = Depends(get_db)):
     try:
-        cursor.execute(
-            f"UPDATE books SET {set_clause} WHERE id = ?",
-            list(update_data.values()) + [book_id]
-        )
-        conn.commit()
+        db_book = db.query(BookModel).filter(BookModel.id == book_id).first()
+        if db_book is None:
+            raise HTTPException(status_code=404, detail="Livro não encontrado")
         
-        cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-        row = cursor.fetchone()
+        update_data = book.dict(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
         
-        return Book(
-            id=row["id"],
-            title=row["title"],
-            author=row["author"],
-            isbn=row["isbn"],
-            publication_date=row["publication_date"],
-            description=row["description"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"]
-        )
-    
-    except sqlite3.IntegrityError as e:
-        if "isbn" in str(e).lower():
+        for field, value in update_data.items():
+            setattr(db_book, field, value)
+        
+        db_book.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_book)
+        return db_book
+    except HTTPException:
+        raise
+    except IntegrityError as e:
+        db.rollback()
+        if "isbn" in str(e).lower() or "duplicate" in str(e).lower():
             raise HTTPException(status_code=400, detail="ISBN já existe")
         raise HTTPException(status_code=400, detail="Erro de integridade dos dados")
-    finally:
-        conn.close()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao atualizar livro: {str(e)}")
 
 @app.delete("/api/books/{book_id}", status_code=204, summary="Excluir livro")
-async def delete_book(book_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-    existing_book = cursor.fetchone()
-    
-    if existing_book is None:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Livro não encontrado")
-    
-    cursor.execute("DELETE FROM books WHERE id = ?", (book_id,))
-    conn.commit()
-    conn.close()
+async def delete_book(book_id: int, db: Session = Depends(get_db)):
+    try:
+        db_book = db.query(BookModel).filter(BookModel.id == book_id).first()
+        if db_book is None:
+            raise HTTPException(status_code=404, detail="Livro não encontrado")
+        
+        db.delete(db_book)
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao excluir livro: {str(e)}")
 
 @app.get("/api/books/search/{query}", response_model=List[Book], summary="Buscar livros")
-async def search_books(query: str, skip: int = 0, limit: int = 50):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    search_query = f"%{query}%"
-    cursor.execute("""
-        SELECT * FROM books 
-        WHERE title LIKE ? OR author LIKE ? OR description LIKE ?
-        ORDER BY 
-            CASE 
-                WHEN title LIKE ? THEN 1 
-                WHEN author LIKE ? THEN 2 
-                ELSE 3 
-            END, created_at DESC
-        LIMIT ? OFFSET ?
-    """, (search_query, search_query, search_query, search_query, search_query, limit, skip))
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [
-        Book(
-            id=row["id"],
-            title=row["title"],
-            author=row["author"],
-            isbn=row["isbn"],
-            publication_date=row["publication_date"],
-            description=row["description"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"]
-        )
-        for row in rows
-    ]
+async def search_books(query: str, skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    try:
+        search_query = f"%{query}%"
+        books = db.query(BookModel).filter(
+            (BookModel.title.like(search_query)) |
+            (BookModel.author.like(search_query)) |
+            (BookModel.description.like(search_query))
+        ).order_by(BookModel.created_at.desc()).offset(skip).limit(limit).all()
+        return books
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar livros: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("API_PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
