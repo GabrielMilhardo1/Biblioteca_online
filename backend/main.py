@@ -4,18 +4,39 @@ from pydantic import BaseModel, Field
 from datetime import date, datetime
 from contextlib import asynccontextmanager
 from sqlalchemy import create_engine, text, Column, Integer, String, Text, Date, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.exc import IntegrityError, OperationalError
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost:3306/biblioteca")
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-engine = create_engine(DATABASE_URL, echo=False)
+# Tentar MySQL primeiro, depois SQLite como fallback
+MYSQL_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost:3306/biblioteca")
+SQLITE_URL = "sqlite:///books.db"
+
+def create_engine_with_fallback():
+    try:
+        # Tentar MySQL primeiro
+        engine = create_engine(MYSQL_URL, echo=False)
+        # Testar conexão
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("✅ Conectado ao MySQL com sucesso!")
+        return engine, "MySQL"
+    except (OperationalError, Exception) as e:
+        logger.warning(f"❌ MySQL não disponível: {str(e)}")
+        logger.info("🔄 Usando SQLite como fallback...")
+        engine = create_engine(SQLITE_URL, echo=False)
+        return engine, "SQLite"
+
+engine, db_type = create_engine_with_fallback()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -48,7 +69,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Sistema de Gerenciamento de Livros",
-    description="API simples para CRUD de livros usando MySQL",
+    description=f"API simples para CRUD de livros usando {db_type}",
     version="2.0.0",
     lifespan=lifespan
 )
@@ -88,7 +109,7 @@ class Book(BookBase):
 
 @app.get("/", summary="Root endpoint")
 async def read_root():
-    return {"message": "Sistema de Gerenciamento de Livros API", "version": "2.0.0", "database": "MySQL"}
+    return {"message": "Sistema de Gerenciamento de Livros API", "version": "2.0.0", "database": db_type}
 
 @app.post("/api/books", response_model=Book, status_code=201, summary="Criar novo livro")
 async def create_book(book: BookCreate, db: Session = Depends(get_db)):

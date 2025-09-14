@@ -4,19 +4,19 @@ Sistema completo para gerenciar biblioteca digital com operações CRUD.
 
 ## 🚀 Tecnologias
 
-- **Backend**: FastAPI + SQLAlchemy + MySQL
+- **Backend**: FastAPI + SQLAlchemy
 - **Frontend**: React + TypeScript + Vite
-- **Banco**: MySQL 8.0+ (criação automática de tabelas)
+- **Banco**: MySQL 8.0+ com fallback automático para SQLite
 - **ORM**: SQLAlchemy 2.0
 
-## 🗄️ Configuração do Banco MySQL
+## 🗄️ Configuração do Banco de Dados
 
-### Pré-requisitos
-- MySQL Server 8.0+ instalado
-- Acesso administrativo ao MySQL
+### 🔄 Sistema Inteligente de Fallback
+O sistema tenta conectar ao **MySQL primeiro**. Se não conseguir, **automaticamente** usa **SQLite** como fallback.
 
-### Setup do Banco
+### Opção 1: MySQL (Recomendado para produção)
 ```sql
+-- Instalar MySQL Server 8.0+
 -- Conectar ao MySQL
 mysql -u root -p
 
@@ -29,24 +29,35 @@ GRANT ALL PRIVILEGES ON biblioteca.* TO 'biblioteca_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
+### Opção 2: SQLite (Automático se MySQL não disponível)
+- ✅ **Zero configuração** - funciona imediatamente
+- ✅ **Arquivo local** - `books.db` criado automaticamente
+- ✅ **Perfeito para desenvolvimento** e testes
+
 ## ⚡ Como Executar
 
-### 1. Configurar Variáveis de Ambiente
+### Método 1: Início Rápido (SQLite)
 ```bash
-cd backend
-cp .env.example .env
-# Editar .env com suas credenciais MySQL
-```
-
-### 2. Backend
-```bash
+# Backend - roda automaticamente com SQLite
 cd backend
 pip install -r requirements.txt
 python main.py
+# ✅ Funcionando em segundos!
 ```
-▶️ **Roda em**: http://localhost:8000
 
-### 3. Frontend
+### Método 2: Com MySQL (Configuração adicional)
+```bash
+# 1. Configurar variáveis de ambiente
+cd backend
+cp .env.example .env
+# Editar .env com suas credenciais MySQL
+
+# 2. Iniciar backend
+pip install -r requirements.txt
+python main.py
+```
+
+### Frontend (Para ambos os métodos)
 ```bash
 cd frontend
 npm install
@@ -62,12 +73,18 @@ npm run dev
 - 🗑️ **Excluir** com confirmação
 - 🔍 **Buscar** por título, autor ou descrição
 
-## 🗄️ Banco de Dados - MySQL
+## 🗄️ Sistema de Banco Inteligente
 
-- MySQL 8.0+ com SQLAlchemy ORM
-- Tabelas criadas automaticamente na inicialização
-- Schema: Tabela `books` com constraints e relacionamentos
-- Suporte a transações e rollback automático
+### 🤖 Detecção Automática:
+- ✅ **MySQL disponível**: Usa MySQL (produção)
+- ✅ **MySQL indisponível**: Fallback automático para SQLite
+- ✅ **Logs informativos**: Mostra qual banco está sendo usado
+
+### 📊 Características:
+- **SQLAlchemy ORM 2.0** profissional
+- **Criação automática** de tabelas
+- **Transações seguras** com rollback
+- **Schema consistente** entre MySQL e SQLite
 
 ## 📊 API Documentation
 
